@@ -1,0 +1,67 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: cms0057-prior-auth-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:cms0057db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:org.h2.Driver}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+  h2:
+    console:
+      enabled: ${SPRING_H2_CONSOLE_ENABLED:true}
+      path: /h2-console
+  jpa:
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.dialect.H2Dialect}
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:create-drop}
+    show-sql: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OAUTH2_ISSUER_URI:http://localhost:9000}
+
+fhir:
+  server:
+    base-url: ${FHIR_SERVER_BASE_URL:http://localhost:8080/fhir}
+  validation:
+    enabled: true
+
+cms0057:
+  crd:
+    # CDS Hooks discovery endpoint
+    hooks-base-url: ${CRD_HOOKS_BASE_URL:http://localhost:8080/cds-services}
+    # Supported hooks per Da Vinci CRD IG
+    supported-hooks:
+      - order-sign
+      - order-select
+      - appointment-book
+      - encounter-start
+      - encounter-discharge
+  dtr:
+    # SMART on FHIR app launch URL
+    smart-launch-url: ${DTR_SMART_LAUNCH_URL:http://localhost:3000/dtr}
+    questionnaire-base: classpath:fhir/questionnaires/
+  pas:
+    # Response SLA per CMS-0057-F mandate
+    urgent-response-hours: 72
+    standard-response-days: 7
+    # X12 278 / FHIR translation
+    x12-translation-enabled: ${X12_TRANSLATION_ENABLED:false}
+    x12-endpoint: ${X12_ENDPOINT:}
+  compliance:
+    # Payer NPI / organization info
+    payer-npi: ${PAYER_NPI:1234567890}
+    payer-name: ${PAYER_NAME:CMS0057 Demo Payer}
+    payer-id: ${PAYER_ID:DEMO001}
+
+logging:
+  level:
+    com.cms0057: DEBUG
+    ca.uhn.fhir: WARN
+    org.springframework.security: INFO

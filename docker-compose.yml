@@ -1,0 +1,60 @@
+services:
+
+  h2:
+    image: oscarfonts/h2:2.2.224
+    container_name: cms0057-h2
+    ports:
+      - "1521:1521"   # H2 TCP server — JDBC connections
+      - "81:81"       # H2 web console  → http://localhost:81
+    environment:
+      H2_OPTIONS: -ifNotExists
+    volumes:
+      - h2-data:/opt/h2-data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 1521 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  cms0057-prior-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cms0057-prior-auth
+    ports:
+      - "8080:8080"
+    depends_on:
+      h2:
+        condition: service_healthy
+    environment:
+      # H2 TCP server datasource — file-based so data persists across restarts
+      SPRING_DATASOURCE_URL: jdbc:h2:tcp://h2:1521/cms0057db
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.h2.Driver
+      SPRING_DATASOURCE_USERNAME: sa
+      SPRING_DATASOURCE_PASSWORD: ""
+      SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.H2Dialect
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_H2_CONSOLE_ENABLED: "false"    # console served by the h2 container instead
+
+      # CMS-0057 payer identity (override as needed)
+      PAYER_NAME: ${PAYER_NAME:-CMS0057 Demo Payer}
+      PAYER_NPI: ${PAYER_NPI:-1234567890}
+      PAYER_ID: ${PAYER_ID:-DEMO001}
+
+      # OAuth2 — set to your IdP in production; disabled by default via test profile
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-test}
+
+      # DTR SMART app launch URL
+      DTR_SMART_LAUNCH_URL: ${DTR_SMART_LAUNCH_URL:-http://localhost:3000/dtr}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: on-failure
+
+volumes:
+  h2-data:
+    name: cms0057-h2-data
