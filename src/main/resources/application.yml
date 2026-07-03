@@ -60,6 +60,19 @@ cms0057:
     payer-name: ${PAYER_NAME:CMS0057 Demo Payer}
     payer-id: ${PAYER_ID:DEMO001}
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+    try-it-out-enabled: true
+    display-request-duration: true
+  show-actuator: false
+  default-consumes-media-type: application/fhir+json
+  default-produces-media-type: application/fhir+json
+
 logging:
   level:
     com.cms0057: DEBUG

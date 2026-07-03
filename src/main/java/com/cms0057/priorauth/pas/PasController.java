@@ -2,6 +2,13 @@ package com.cms0057.priorauth.pas;
 
 import ca.uhn.fhir.parser.IParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.OperationOutcome;
 import org.hl7.fhir.r4.model.Parameters;
@@ -11,20 +18,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Prior Authorization Support (PAS) FHIR endpoints per Da Vinci PAS IG.
- *
- *   POST /fhir/Claim/$submit    — submit a new PA request (Bundle → Bundle)
- *   POST /fhir/Claim/$inquire   — query status of an existing PA
- *   GET  /fhir/Claim            — search PA requests by patient
- *   GET  /fhir/metadata         — FHIR CapabilityStatement
- *
- * CMS-0057-F response time mandates:
- *   Urgent (expedited): ≤ 72 hours
- *   Standard:           ≤ 7 calendar days
- */
 @RestController
 @RequestMapping("/fhir")
+@Tag(name = "PAS", description = "Prior Authorization Support — Da Vinci PAS FHIR operations")
 public class PasController {
 
     private static final Logger log = LoggerFactory.getLogger(PasController.class);
@@ -40,15 +36,82 @@ public class PasController {
         this.objectMapper = objectMapper;
     }
 
-    /**
-     * POST /fhir/Claim/$submit
-     *
-     * Provider submits a PA request as a Da Vinci PAS Bundle (Claim + Coverage +
-     * Patient + Practitioner + ServiceRequest + DocumentReference gathered via DTR).
-     * Returns a Bundle with ClaimResponse:
-     *   - outcome=complete  → immediate approval (auto-approvable service)
-     *   - outcome=queued    → pended, with SLA deadline per CMS-0057-F
-     */
+    @Operation(
+        summary = "Submit prior authorization request — $submit",
+        description = """
+            Submits a Da Vinci PAS Bundle containing a prior authorization request.
+
+            The Bundle must include a PAS-profiled `Claim` resource \
+            (`http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-claim`) \
+            plus supporting resources: `Coverage`, `Patient`, `Practitioner`, `ServiceRequest`, \
+            and any `DocumentReference` resources gathered via the DTR workflow.
+
+            **Response:**
+            - `outcome=complete` — immediate approval (auto-approvable service codes: 99213–99215, G0101, G0102)
+            - `outcome=queued` — pended; decision will be provided within the SLA deadline
+
+            **CMS-0057-F SLA:**
+            - Standard (`priority=normal`): ≤ 7 calendar days
+            - Urgent/expedited (`priority=stat`): ≤ 72 hours
+            """,
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            description = "Da Vinci PAS request Bundle (Claim + supporting resources)",
+            content = @Content(mediaType = FHIR_JSON,
+                examples = @ExampleObject(name = "Standard PA request", value = """
+                    {
+                      "resourceType": "Bundle",
+                      "type": "collection",
+                      "meta": {
+                        "profile": ["http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-pas-request-bundle"]
+                      },
+                      "entry": [{
+                        "resource": {
+                          "resourceType": "Claim",
+                          "id": "claim-001",
+                          "meta": {
+                            "profile": ["http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-claim"]
+                          },
+                          "status": "active",
+                          "use": "preauthorization",
+                          "type": {
+                            "coding": [{ "system": "http://terminology.hl7.org/CodeSystem/claim-type", "code": "professional" }]
+                          },
+                          "priority": {
+                            "coding": [{ "system": "http://terminology.hl7.org/CodeSystem/processpriority", "code": "normal" }]
+                          },
+                          "patient": { "reference": "Patient/patient-001" },
+                          "provider": { "reference": "Practitioner/prac-001" },
+                          "created": "2026-07-02T10:00:00Z",
+                          "insurance": [{ "sequence": 1, "focal": true, "coverage": { "reference": "Coverage/coverage-001" }}],
+                          "item": [{
+                            "sequence": 1,
+                            "productOrService": {
+                              "coding": [{ "system": "http://www.ama-assn.org/go/cpt", "code": "77065", "display": "Diagnostic mammography" }]
+                            }
+                          }]
+                        }
+                      }]
+                    }
+                    """)))
+    )
+    @ApiResponse(responseCode = "200", description = "PA response Bundle with ClaimResponse and workflow Task",
+        content = @Content(mediaType = FHIR_JSON,
+            examples = @ExampleObject(name = "Pended response", value = """
+                {
+                  "resourceType": "Bundle",
+                  "type": "collection",
+                  "entry": [{
+                    "resource": {
+                      "resourceType": "ClaimResponse",
+                      "use": "preauthorization",
+                      "outcome": "queued",
+                      "disposition": "PA request received and pending review. Decision required by 2026-07-09T..."
+                    }
+                  }]
+                }
+                """)))
+    @ApiResponse(responseCode = "422", description = "Invalid request — Bundle must contain a Claim",
+        content = @Content(mediaType = FHIR_JSON))
     @PostMapping(
         value = "/Claim/$submit",
         consumes = {FHIR_JSON, "application/json"},
@@ -67,12 +130,26 @@ public class PasController {
         }
     }
 
-    /**
-     * POST /fhir/Claim/$inquire
-     *
-     * Provider queries status of an existing PA. Request body is a FHIR Parameters
-     * resource with parameter name "claimId". Returns current ClaimResponse Bundle.
-     */
+    @Operation(
+        summary = "Query PA status — $inquire",
+        description = """
+            Polls the current status of an existing prior authorization request. \
+            Send a FHIR `Parameters` resource with a `claimId` parameter containing \
+            the Claim ID from the original $submit request.
+            """,
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            content = @Content(mediaType = FHIR_JSON,
+                examples = @ExampleObject(value = """
+                    {
+                      "resourceType": "Parameters",
+                      "parameter": [{ "name": "claimId", "valueString": "claim-001" }]
+                    }
+                    """)))
+    )
+    @ApiResponse(responseCode = "200", description = "Current PA status as a ClaimResponse Bundle",
+        content = @Content(mediaType = FHIR_JSON))
+    @ApiResponse(responseCode = "404", description = "No PA request found for the given claimId",
+        content = @Content(mediaType = FHIR_JSON))
     @PostMapping(
         value = "/Claim/$inquire",
         consumes = {FHIR_JSON, "application/json"},
@@ -91,12 +168,17 @@ public class PasController {
         }
     }
 
-    /**
-     * GET /fhir/Claim?patient={patientId}
-     * Returns all PA requests for a given patient.
-     */
+    @Operation(
+        summary = "Search PA requests by patient",
+        description = "Returns a FHIR Bundle (searchset) of all prior authorization Claim resources for the given patient."
+    )
+    @ApiResponse(responseCode = "200", description = "Bundle of PA Claim resources",
+        content = @Content(mediaType = FHIR_JSON))
+    @ApiResponse(responseCode = "400", description = "Missing required patient parameter",
+        content = @Content(mediaType = FHIR_JSON))
     @GetMapping(value = "/Claim", produces = FHIR_JSON)
     public ResponseEntity<String> searchClaims(
+            @Parameter(description = "Patient FHIR ID", example = "patient-001")
             @RequestParam(name = "patient", required = false) String patientId) {
         log.info("GET /fhir/Claim?patient={}", patientId);
         if (patientId == null) {
@@ -107,9 +189,14 @@ public class PasController {
         return ResponseEntity.ok(fhirJsonParser.encodeResourceToString(bundle));
     }
 
-    /**
-     * GET /fhir/metadata — FHIR CapabilityStatement declaring PAS/CRD/DTR support.
-     */
+    @Operation(
+        summary = "FHIR CapabilityStatement",
+        description = "Returns the FHIR R4 CapabilityStatement declaring CRD, DTR, and PAS server capabilities.",
+        security = {}
+    )
+    @ApiResponse(responseCode = "200", description = "FHIR CapabilityStatement",
+        content = @Content(mediaType = FHIR_JSON))
+    @Tag(name = "FHIR")
     @GetMapping(value = "/metadata", produces = FHIR_JSON)
     public ResponseEntity<String> capabilityStatement() {
         String cs = """
